@@ -25,7 +25,7 @@ impl<I: Id, T: Scalar> RvqIndex<I, T> {
 
     pub fn insert(&mut self, id: I, codes: &[Code]) -> RvqIndexResult<()> {
         self.trie.insert(codes)?;
-        self.entities.insert(id, codes.to_vec());
+        self.entities.insert(id, codes);
         Ok(())
     }
 

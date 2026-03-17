@@ -9,16 +9,21 @@ struct Candidate<'c, T> {
     cumulative_score: T,
     depth: usize,
     node: &'c TrieNode,
-    path: Vec<Code>,
+    path_idx: Option<usize>,
 }
 
 impl<'c, T> Candidate<'c, T> {
-    pub fn new(cumulative_score: T, depth: usize, node: &'c TrieNode, path: Vec<Code>) -> Self {
+    pub fn new(
+        cumulative_score: T,
+        depth: usize,
+        node: &'c TrieNode,
+        path_idx: Option<usize>,
+    ) -> Self {
         Self {
             cumulative_score,
             depth,
             node,
-            path,
+            path_idx,
         }
     }
 }
@@ -96,41 +101,56 @@ impl CodeTrie {
         self.traverse(codes).is_ok()
     }
 
+    fn collect_path(
+        path_arena: &[(Code, Option<usize>)],
+        mut path_idx: Option<usize>,
+        depth: usize,
+    ) -> Vec<Code> {
+        let mut out = Vec::with_capacity(depth);
+        while let Some(i) = path_idx {
+            out.push(path_arena[i].0);
+            path_idx = path_arena[i].1;
+        }
+        out.reverse();
+        out
+    }
+
     pub fn search<T: Scalar>(
         &self,
         scores: &ScoredBooks<T>,
         k: usize,
     ) -> TrieResult<Vec<Vec<Code>>> {
         if self.depth != scores.num_books {
-            return Err(TrieError::BooksNumberMismatch(scores.num_books, self.depth));
+            return Err(TrieError::BookNumberMismatch(scores.num_books, self.depth));
         }
 
         let mut result = Vec::with_capacity(k);
+        let mut path_arena = Vec::new();
         let mut heap = BinaryHeap::new();
-        heap.push(Candidate::new(
-            T::default(),
-            0,
-            &self.root,
-            Vec::with_capacity(self.depth),
-        ));
+
+        heap.push(Candidate::new(T::default(), 0, &self.root, None));
 
         while result.len() < k
             && let Some(candidate) = heap.pop()
         {
             if candidate.depth == self.depth {
-                result.push(candidate.path);
+                result.push(Self::collect_path(
+                    &path_arena,
+                    candidate.path_idx,
+                    self.depth,
+                ));
                 continue;
             }
 
-            for scored_code in scores.get_book(candidate.depth) {
-                if let Some(child) = candidate.node.children.get(&scored_code.code) {
-                    let mut new_path = candidate.path.clone(); // TODO: avoid cloning
-                    new_path.push(scored_code.code);
+            for (code, &score) in scores.get_book(candidate.depth).iter().enumerate() {
+                if let Some(child) = candidate.node.children.get(&code) {
+                    path_arena.push((code, candidate.path_idx));
+                    let new_path_idx = Some(path_arena.len() - 1);
                     heap.push(Candidate::new(
-                        candidate.cumulative_score + scored_code.score,
+                        candidate.cumulative_score + score,
                         candidate.depth + 1,
                         child,
-                        new_path,
+                        new_path_idx,
                     ));
                 }
             }

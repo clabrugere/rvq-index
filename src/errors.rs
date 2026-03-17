@@ -30,7 +30,7 @@ pub enum TrieError {
     #[error("{0} not found")]
     NotFound(Code),
     #[error("Number of books in ScoredBooks should match depth, got {0} while expected {1}")]
-    BooksNumberMismatch(usize, usize),
+    BookNumberMismatch(usize, usize),
 }
 
 #[derive(Debug, Error)]

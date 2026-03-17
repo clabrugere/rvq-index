@@ -18,8 +18,8 @@ impl<I: Id> EntityStore<I> {
         }
     }
 
-    pub fn insert(&mut self, id: I, codes: Vec<Code>) -> Option<I> {
-        self.codes_to_id.insert(codes, id)
+    pub fn insert(&mut self, id: I, codes: &[Code]) -> Option<I> {
+        self.codes_to_id.insert(codes.to_vec(), id)
     }
 
     pub fn get_id(&self, codes: &[Code]) -> Option<&I> {
