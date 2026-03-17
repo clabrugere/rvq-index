@@ -5,7 +5,7 @@ use core::{
     ops::{Add, Mul},
 };
 
-use super::errors::{CodeBooksError, CodeBooksResult};
+use crate::errors::{CodeBooksError, CodeBooksResult};
 
 // Bounded traits to score embeddings with blanket implementation
 pub trait Scalar:
@@ -20,7 +20,9 @@ impl<T: Default + Copy + PartialOrd + Send + Sync + Add<Output = Self> + Mul<Out
 pub type Code = usize;
 
 // Computes the dot product of two arrays of size D
+#[inline(always)]
 fn dot<T: Scalar>(x: &[T], y: &[T]) -> T {
+    assert_eq!(x.len(), y.len());
     x.iter().zip(y).map(|(&xi, &yi)| xi * yi).sum()
 }
 
@@ -76,11 +78,6 @@ impl<T> CodeBooks<T> {
             num_codes,
             dim,
         })
-    }
-
-    pub fn get_embedding(&self, book: usize, code: usize) -> &[T] {
-        let offset = (book * self.num_codes + code) * self.dim;
-        &self.data[offset..offset + self.dim]
     }
 
     pub fn score(&self, query: &[T]) -> CodeBooksResult<ScoredBooks<T>>

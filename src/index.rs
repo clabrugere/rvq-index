@@ -1,10 +1,9 @@
-use crate::codebook::{CodeBooks, Scalar};
-use crate::store::Id;
+use rayon::prelude::*;
 
-use super::codebook::Code;
-use super::errors::RvqIndexResult;
-use super::store::EntityStore;
-use super::trie::CodeTrie;
+use crate::codebook::{Code, CodeBooks, Scalar};
+use crate::errors::RvqIndexResult;
+use crate::store::{EntityStore, Id};
+use crate::trie::CodeTrie;
 
 #[derive(Debug)]
 pub struct RvqIndex<I, T> {
@@ -29,6 +28,16 @@ impl<I: Id, T: Scalar> RvqIndex<I, T> {
         Ok(())
     }
 
+    pub fn insert_batch(
+        &mut self,
+        iterator: impl IntoIterator<Item = (I, Vec<Code>)>,
+    ) -> RvqIndexResult<()> {
+        iterator
+            .into_iter()
+            .try_for_each(|(id, codes)| self.insert(id, &codes))?;
+        Ok(())
+    }
+
     pub fn search(&self, query: &[T], k: usize) -> RvqIndexResult<Vec<&I>> {
         let scores = self.codebooks.score(query)?;
         let top_k = self
@@ -38,6 +47,13 @@ impl<I: Id, T: Scalar> RvqIndex<I, T> {
             .filter_map(|codes| self.entities.get_id(codes))
             .collect();
         Ok(top_k)
+    }
+
+    pub fn search_batch(&self, queries: &[&[T]], k: usize) -> RvqIndexResult<Vec<Vec<&I>>> {
+        queries
+            .par_iter()
+            .map(|query| self.search(query, k))
+            .collect()
     }
 
     pub fn get_id(&self, codes: &[Code]) -> Option<&I> {

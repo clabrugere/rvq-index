@@ -1,17 +1,10 @@
 use thiserror::Error;
 
-use super::codebook::Code;
+use crate::codebook::Code;
 
-pub type ScoredCodeBookResult<R> = Result<R, ScoredCodeBookError>;
 pub type CodeBooksResult<R> = Result<R, CodeBooksError>;
 pub type TrieResult<R> = Result<R, TrieError>;
 pub type RvqIndexResult<R> = Result<R, RvqIndexError>;
-
-#[derive(Debug, Error)]
-pub enum ScoredCodeBookError {
-    #[error("Inconsistent input shapes, got {0} while expected {1}")]
-    InconsistentShapes(usize, usize),
-}
 
 #[derive(Debug, Error)]
 pub enum CodeBooksError {
@@ -19,8 +12,6 @@ pub enum CodeBooksError {
     InconsistentShapes(usize, usize),
     #[error("Query dimension mismatch")]
     QueryDimensionMismatch,
-    #[error("ScoredCodeBook error: {0}")]
-    ScoredCodeBookError(#[from] ScoredCodeBookError),
 }
 
 #[derive(Debug, Error)]

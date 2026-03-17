@@ -1,8 +1,8 @@
-use std::cmp::Ordering;
+use core::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 
-use super::codebook::{Code, Scalar, ScoredBooks};
-use super::errors::{TrieError, TrieResult};
+use crate::codebook::{Code, Scalar, ScoredBooks};
+use crate::errors::{TrieError, TrieResult};
 
 #[derive(Debug)]
 struct Candidate<'c, T> {
