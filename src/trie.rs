@@ -6,6 +6,7 @@ use crate::errors::{TrieError, TrieResult};
 
 #[derive(Debug)]
 struct Candidate<'c, T> {
+    upper_bound: T,
     cumulative_score: T,
     depth: usize,
     node: &'c TrieNode,
@@ -14,12 +15,14 @@ struct Candidate<'c, T> {
 
 impl<'c, T> Candidate<'c, T> {
     pub fn new(
+        upper_bound: T,
         cumulative_score: T,
         depth: usize,
         node: &'c TrieNode,
         path_idx: Option<usize>,
     ) -> Self {
         Self {
+            upper_bound,
             cumulative_score,
             depth,
             node,
@@ -30,7 +33,7 @@ impl<'c, T> Candidate<'c, T> {
 
 impl<'c, T: Scalar> PartialEq for Candidate<'c, T> {
     fn eq(&self, other: &Self) -> bool {
-        self.cumulative_score == other.cumulative_score
+        self.upper_bound == other.upper_bound
     }
 }
 
@@ -44,8 +47,8 @@ impl<'c, T: Scalar> PartialOrd for Candidate<'c, T> {
 
 impl<'c, T: Scalar> Ord for Candidate<'c, T> {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.cumulative_score
-            .partial_cmp(&other.cumulative_score)
+        self.upper_bound
+            .partial_cmp(&other.upper_bound)
             .unwrap_or(Ordering::Equal)
     }
 }
@@ -70,7 +73,11 @@ impl CodeTrie {
         }
     }
 
-    fn traverse<'a>(&'a self, codes: &[Code]) -> TrieResult<&'a TrieNode> {
+    pub fn is_empty(&self) -> bool {
+        self.root.children.is_empty()
+    }
+
+    fn traverse<'n>(&'n self, codes: &[Code]) -> TrieResult<&'n TrieNode> {
         if codes.len() != self.depth {
             return Err(TrieError::CodesLengthMismatch(codes.len(), self.depth));
         }
@@ -124,11 +131,23 @@ impl CodeTrie {
             return Err(TrieError::BookNumberMismatch(scores.num_books, self.depth));
         }
 
+        // max achievable score from book to the end
+        let mut remaining_max = vec![T::default(); self.depth + 1];
+        for book in (0..self.depth).rev() {
+            remaining_max[book] = remaining_max[book + 1] + scores.get_book_max(book);
+        }
+
         let mut result = Vec::with_capacity(k);
         let mut path_arena = Vec::new();
         let mut heap = BinaryHeap::new();
 
-        heap.push(Candidate::new(T::default(), 0, &self.root, None));
+        heap.push(Candidate::new(
+            remaining_max[0],
+            T::default(),
+            0,
+            &self.root,
+            None,
+        ));
 
         while result.len() < k
             && let Some(candidate) = heap.pop()
@@ -145,10 +164,16 @@ impl CodeTrie {
             for (code, &score) in scores.get_book(candidate.depth).iter().enumerate() {
                 if let Some(child) = candidate.node.children.get(&code) {
                     path_arena.push((code, candidate.path_idx));
+
                     let new_path_idx = Some(path_arena.len() - 1);
+                    let cumulative_score = candidate.cumulative_score + score;
+                    let next_depth = candidate.depth + 1;
+                    let upper_bound = cumulative_score + remaining_max[next_depth];
+
                     heap.push(Candidate::new(
-                        candidate.cumulative_score + score,
-                        candidate.depth + 1,
+                        upper_bound,
+                        cumulative_score,
+                        next_depth,
                         child,
                         new_path_idx,
                     ));
@@ -156,5 +181,115 @@ impl CodeTrie {
             }
         }
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::codebook::ScoredBooks;
+
+    // Fixture: depth=2, num_codes=3
+    // book 0 scores: [1.0, 2.0, 3.0]
+    // book 1 scores: [10.0, 20.0, 30.0]
+    // paths:  [0,0] → 11,  [0,2] → 31,  [1,1] → 22
+    fn make_trie_and_scores() -> (CodeTrie, ScoredBooks<f32>) {
+        let mut trie = CodeTrie::new(2);
+        trie.insert(&[0, 0]).unwrap();
+        trie.insert(&[0, 2]).unwrap();
+        trie.insert(&[1, 1]).unwrap();
+        let scores = ScoredBooks::new(vec![1.0, 2.0, 3.0, 10.0, 20.0, 30.0], 2, 3);
+        (trie, scores)
+    }
+
+    #[test]
+    fn test_insertion() {
+        let mut trie = CodeTrie::new(3);
+        assert!(trie.is_empty());
+
+        let codes1 = vec![1, 2, 3];
+        let codes2 = vec![1, 2, 4];
+        let codes3 = vec![1, 3, 4];
+
+        assert!(trie.insert(&codes1).is_ok());
+        assert!(trie.insert(&codes2).is_ok());
+        assert!(trie.insert(&codes3).is_ok());
+
+        assert!(trie.contains(&codes1));
+        assert!(trie.contains(&codes2));
+        assert!(trie.contains(&codes3));
+        assert!(!trie.contains(&vec![0, 0, 0]));
+    }
+
+    #[test]
+    fn test_insert_wrong_length() {
+        let mut trie = CodeTrie::new(3);
+        assert!(matches!(
+            trie.insert(&[0, 1]),
+            Err(TrieError::CodesLengthMismatch(2, 3))
+        ));
+    }
+
+    #[test]
+    fn test_insert_duplicate() {
+        let mut trie = CodeTrie::new(2);
+        trie.insert(&[1, 2]).unwrap();
+        assert!(trie.insert(&[1, 2]).is_ok());
+        assert!(trie.contains(&[1, 2]));
+    }
+
+    #[test]
+    fn test_contains_wrong_length() {
+        let trie = CodeTrie::new(3);
+        assert!(!trie.contains(&[0, 1]));
+    }
+
+    #[test]
+    fn test_search_top_k() {
+        let (trie, scores) = make_trie_and_scores();
+        let result = trie.search(&scores, 2).unwrap();
+        assert_eq!(result, vec![vec![0, 2], vec![1, 1]]);
+    }
+
+    #[test]
+    fn test_search_all_results() {
+        let (trie, scores) = make_trie_and_scores();
+        let result = trie.search(&scores, 10).unwrap();
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0], vec![0, 2]);
+        assert_eq!(result[1], vec![1, 1]);
+        assert_eq!(result[2], vec![0, 0]);
+    }
+
+    #[test]
+    fn test_search_k_one() {
+        let (trie, scores) = make_trie_and_scores();
+        let result = trie.search(&scores, 1).unwrap();
+        assert_eq!(result, vec![vec![0, 2]]);
+    }
+
+    #[test]
+    fn test_search_k_zero() {
+        let (trie, scores) = make_trie_and_scores();
+        let result = trie.search(&scores, 0).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_search_empty_trie() {
+        let trie = CodeTrie::new(2);
+        let scores = ScoredBooks::new(vec![1.0, 2.0, 3.0, 10.0, 20.0, 30.0], 2, 3);
+        let result = trie.search(&scores, 3).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_search_depth_mismatch() {
+        let trie = CodeTrie::new(2);
+        let scores = ScoredBooks::new(vec![1.0; 9], 3, 3);
+        assert!(matches!(
+            trie.search(&scores, 1),
+            Err(TrieError::BookNumberMismatch(3, 2))
+        ));
     }
 }

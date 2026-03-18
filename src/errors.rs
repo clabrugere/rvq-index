@@ -1,4 +1,8 @@
+#[cfg(feature = "safetensors")]
+use safetensors::SafeTensorError;
 use thiserror::Error;
+
+use std::io::Error as IoError;
 
 use crate::codebook::Code;
 
@@ -12,6 +16,13 @@ pub enum CodeBooksError {
     InconsistentShapes(usize, usize),
     #[error("Query dimension mismatch")]
     QueryDimensionMismatch,
+    #[error("IO error: {0}")]
+    Io(#[from] IoError),
+    #[error("Expected 3D array [num_books, num_codes, dim], got {0}D")]
+    FileInconsistentShape(usize),
+    #[cfg(feature = "safetensors")]
+    #[error("SafeTensors error: {0}")]
+    SafeTensors(#[from] SafeTensorError),
 }
 
 #[derive(Debug, Error)]
