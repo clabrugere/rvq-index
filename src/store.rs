@@ -6,7 +6,7 @@ use crate::codebook::Code;
 pub trait Id: Default + Copy + Eq + Hash + Send + Sync {}
 impl<T: Default + Copy + Eq + Hash + Send + Sync> Id for T {}
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct EntityStore<I> {
     codes_to_id: HashMap<Vec<Code>, Vec<I>>,
 }
@@ -25,12 +25,12 @@ impl<I: Id> EntityStore<I> {
     pub fn get_ids(&self, codes: &[Code]) -> &[I] {
         self.codes_to_id
             .get(codes)
-            .map(|ids| ids.as_slice())
+            .map(Vec::as_slice)
             .unwrap_or_default()
     }
 
     pub fn len(&self) -> usize {
-        self.codes_to_id.values().map(|ids| ids.len()).sum()
+        self.codes_to_id.values().map(Vec::len).sum()
     }
 
     pub fn count_colliding_ids(&self) -> usize {

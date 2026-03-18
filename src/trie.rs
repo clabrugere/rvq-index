@@ -33,7 +33,7 @@ impl<'c, T> Candidate<'c, T> {
     }
 }
 
-impl<'c, T: Scalar> PartialEq for Candidate<'c, T> {
+impl<T: Scalar> PartialEq for Candidate<'_, T> {
     fn eq(&self, other: &Self) -> bool {
         self.upper_bound == other.upper_bound
             && self.cumulative_score == other.cumulative_score
@@ -42,15 +42,15 @@ impl<'c, T: Scalar> PartialEq for Candidate<'c, T> {
     }
 }
 
-impl<'c, T: Scalar> Eq for Candidate<'c, T> {}
+impl<T: Scalar> Eq for Candidate<'_, T> {}
 
-impl<'c, T: Scalar> PartialOrd for Candidate<'c, T> {
+impl<T: Scalar> PartialOrd for Candidate<'_, T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<'c, T: Scalar> Ord for Candidate<'c, T> {
+impl<T: Scalar> Ord for Candidate<'_, T> {
     fn cmp(&self, other: &Self) -> Ordering {
         self.upper_bound
             .partial_cmp(&other.upper_bound)
@@ -60,7 +60,7 @@ impl<'c, T: Scalar> Ord for Candidate<'c, T> {
 
 #[derive(Debug, Default)]
 struct TrieNode {
-    children: HashMap<Code, TrieNode>,
+    children: HashMap<Code, Self>,
 }
 
 // Structural index over code paths for beam prefix search
