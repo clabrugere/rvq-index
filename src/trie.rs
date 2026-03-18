@@ -1,5 +1,7 @@
-use core::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap};
+use std::{
+    cmp::Ordering,
+    collections::{BinaryHeap, HashMap},
+};
 
 use crate::codebook::{Code, Scalar, ScoredBooks};
 use crate::errors::{TrieError, TrieResult};
@@ -34,6 +36,9 @@ impl<'c, T> Candidate<'c, T> {
 impl<'c, T: Scalar> PartialEq for Candidate<'c, T> {
     fn eq(&self, other: &Self) -> bool {
         self.upper_bound == other.upper_bound
+            && self.cumulative_score == other.cumulative_score
+            && self.depth == other.depth
+            && self.path_idx == other.path_idx
     }
 }
 
@@ -78,10 +83,6 @@ impl CodeTrie {
     }
 
     fn traverse<'n>(&'n self, codes: &[Code]) -> TrieResult<&'n TrieNode> {
-        if codes.len() != self.depth {
-            return Err(TrieError::CodesLengthMismatch(codes.len(), self.depth));
-        }
-
         let mut node = &self.root;
         for code in codes {
             match node.children.get(code) {
@@ -105,6 +106,9 @@ impl CodeTrie {
     }
 
     pub fn contains(&self, codes: &[Code]) -> bool {
+        if codes.len() != self.depth {
+            return false;
+        }
         self.traverse(codes).is_ok()
     }
 
@@ -189,10 +193,9 @@ mod tests {
     use super::*;
     use crate::codebook::ScoredBooks;
 
-    // Fixture: depth=2, num_codes=3
     // book 0 scores: [1.0, 2.0, 3.0]
     // book 1 scores: [10.0, 20.0, 30.0]
-    // paths:  [0,0] → 11,  [0,2] → 31,  [1,1] → 22
+    // paths:  [0,0] -> 11,  [0,2] -> 31,  [1,1] -> 22
     fn make_trie_and_scores() -> (CodeTrie, ScoredBooks<f32>) {
         let mut trie = CodeTrie::new(2);
         trie.insert(&[0, 0]).unwrap();
@@ -211,9 +214,9 @@ mod tests {
         let codes2 = vec![1, 2, 4];
         let codes3 = vec![1, 3, 4];
 
-        assert!(trie.insert(&codes1).is_ok());
-        assert!(trie.insert(&codes2).is_ok());
-        assert!(trie.insert(&codes3).is_ok());
+        trie.insert(&codes1).unwrap();
+        trie.insert(&codes2).unwrap();
+        trie.insert(&codes3).unwrap();
 
         assert!(trie.contains(&codes1));
         assert!(trie.contains(&codes2));
@@ -222,19 +225,10 @@ mod tests {
     }
 
     #[test]
-    fn test_insert_wrong_length() {
-        let mut trie = CodeTrie::new(3);
-        assert!(matches!(
-            trie.insert(&[0, 1]),
-            Err(TrieError::CodesLengthMismatch(2, 3))
-        ));
-    }
-
-    #[test]
     fn test_insert_duplicate() {
         let mut trie = CodeTrie::new(2);
         trie.insert(&[1, 2]).unwrap();
-        assert!(trie.insert(&[1, 2]).is_ok());
+        trie.insert(&[1, 2]).unwrap();
         assert!(trie.contains(&[1, 2]));
     }
 

@@ -37,6 +37,8 @@ pub enum TrieError {
 
 #[derive(Debug, Error)]
 pub enum RvqIndexError {
+    #[error("Invalid code in input, code should be less than number of codes in codebooks")]
+    InvalidCode,
     #[error("Trie error: {0}")]
     TrieError(#[from] TrieError),
     #[error("CodeBook error: {0}")]

@@ -1,7 +1,7 @@
 use rayon::prelude::*;
 
 use crate::codebook::{Code, CodeBooks, Scalar};
-use crate::errors::RvqIndexResult;
+use crate::errors::{RvqIndexError, RvqIndexResult};
 use crate::store::{EntityStore, Id};
 use crate::trie::CodeTrie;
 
@@ -23,6 +23,13 @@ impl<I: Id, T: Scalar> RvqIndex<I, T> {
     }
 
     pub fn insert(&mut self, id: I, codes: &[Code]) -> RvqIndexResult<()> {
+        if codes
+            .iter()
+            .any(|&code| code >= self.codebooks.num_codes as Code)
+        {
+            return Err(RvqIndexError::InvalidCode);
+        }
+
         self.trie.insert(codes)?;
         self.entities.insert(id, codes);
         Ok(())
@@ -38,6 +45,7 @@ impl<I: Id, T: Scalar> RvqIndex<I, T> {
         Ok(())
     }
 
+    // Returns entities corresponding to the top-k scoring code paths. May return more than k entities if collisions exist.
     pub fn search(&self, query: &[T], k: usize) -> RvqIndexResult<Vec<&I>> {
         let scores = self.codebooks.score(query)?;
         let top_k = self
@@ -62,5 +70,9 @@ impl<I: Id, T: Scalar> RvqIndex<I, T> {
 
     pub fn len(&self) -> usize {
         self.entities.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entities.is_empty()
     }
 }

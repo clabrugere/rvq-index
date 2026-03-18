@@ -1,9 +1,10 @@
-use core::{
+use std::{
     cmp::{Ordering, PartialOrd},
     iter::Sum,
     marker::{Copy, Send, Sync},
     ops::{Add, Mul},
 };
+
 #[cfg(any(feature = "npy", feature = "safetensors"))]
 use std::path::Path;
 
@@ -30,7 +31,7 @@ impl<T: Default + Copy + PartialOrd + Send + Sync + Add<Output = Self> + Mul<Out
 
 pub type Code = usize;
 
-// Computes the dot product of two arrays of size D
+// Computes the dot product of two slices of the same length
 #[inline(always)]
 fn dot<T: Scalar>(x: &[T], y: &[T]) -> T {
     assert_eq!(x.len(), y.len());

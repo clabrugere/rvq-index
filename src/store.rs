@@ -33,11 +33,15 @@ impl<I: Id> EntityStore<I> {
         self.codes_to_id.values().map(|ids| ids.len()).sum()
     }
 
-    pub fn num_collisions(&self) -> usize {
+    pub fn count_colliding_ids(&self) -> usize {
         self.codes_to_id
             .values()
             .filter(|ids| ids.len() > 1)
             .count()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.codes_to_id.is_empty()
     }
 }
 
@@ -78,7 +82,7 @@ mod tests {
         store.insert(id2, &codes2);
 
         assert_eq!(store.len(), 3);
-        assert_eq!(store.num_collisions(), 1);
+        assert_eq!(store.count_colliding_ids(), 1);
     }
 
     #[test]
