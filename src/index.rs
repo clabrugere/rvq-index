@@ -28,13 +28,13 @@ impl<I: Id, T: Scalar> RvqIndex<I, T> {
         Ok(())
     }
 
-    pub fn insert_batch(
+    pub fn insert_many(
         &mut self,
         iterator: impl IntoIterator<Item = (I, Vec<Code>)>,
     ) -> RvqIndexResult<()> {
-        iterator
-            .into_iter()
-            .try_for_each(|(id, codes)| self.insert(id, &codes))?;
+        for (id, codes) in iterator {
+            self.insert(id, &codes)?;
+        }
         Ok(())
     }
 
@@ -44,7 +44,7 @@ impl<I: Id, T: Scalar> RvqIndex<I, T> {
             .trie
             .search(&scores, k)?
             .iter()
-            .filter_map(|codes| self.entities.get_id(codes))
+            .flat_map(|codes| self.entities.get_ids(codes))
             .collect();
         Ok(top_k)
     }
@@ -56,8 +56,8 @@ impl<I: Id, T: Scalar> RvqIndex<I, T> {
             .collect()
     }
 
-    pub fn get_id(&self, codes: &[Code]) -> Option<&I> {
-        self.entities.get_id(codes)
+    pub fn get_ids(&self, codes: &[Code]) -> &[I] {
+        self.entities.get_ids(codes)
     }
 
     pub fn len(&self) -> usize {

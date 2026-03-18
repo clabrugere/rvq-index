@@ -89,8 +89,8 @@ impl<T> CodeBooks<T> {
     ) -> CodeBooksResult<Self> {
         if data.len() != num_books * num_codes * dim {
             return Err(CodeBooksError::InconsistentShapes(
-                num_books * num_codes * dim,
                 data.len(),
+                num_books * num_codes * dim,
             ));
         }
 
@@ -107,7 +107,10 @@ impl<T> CodeBooks<T> {
         T: Scalar,
     {
         if query.len() != self.dim {
-            return Err(CodeBooksError::QueryDimensionMismatch);
+            return Err(CodeBooksError::QueryDimensionMismatch(
+                query.len(),
+                self.dim,
+            ));
         }
 
         let scores = self
@@ -188,7 +191,7 @@ mod tests {
         let result = CodeBooks::new(data, 1, 1, 2); // Expecting 2 elements for dim
         assert!(matches!(
             result,
-            Err(CodeBooksError::InconsistentShapes(2, 3))
+            Err(CodeBooksError::InconsistentShapes(3, 2))
         ));
     }
 
@@ -212,7 +215,7 @@ mod tests {
         let result = codebooks.score(&query);
         assert!(matches!(
             result,
-            Err(CodeBooksError::QueryDimensionMismatch)
+            Err(CodeBooksError::QueryDimensionMismatch(2, 3))
         ));
     }
 

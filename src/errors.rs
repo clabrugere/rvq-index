@@ -14,8 +14,8 @@ pub type RvqIndexResult<R> = Result<R, RvqIndexError>;
 pub enum CodeBooksError {
     #[error("Inconsistent input shapes, got {0} while expected {1}")]
     InconsistentShapes(usize, usize),
-    #[error("Query dimension mismatch")]
-    QueryDimensionMismatch,
+    #[error("Query dimension mismatch, got {0} while expected {1}")]
+    QueryDimensionMismatch(usize, usize),
     #[error("IO error: {0}")]
     Io(#[from] IoError),
     #[error("Expected 3D array [num_books, num_codes, dim], got {0}D")]

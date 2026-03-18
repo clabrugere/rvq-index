@@ -8,7 +8,7 @@ impl<T: Default + Copy + Eq + Hash + Send + Sync> Id for T {}
 
 #[derive(Debug)]
 pub struct EntityStore<I> {
-    codes_to_id: HashMap<Vec<Code>, I>,
+    codes_to_id: HashMap<Vec<Code>, Vec<I>>,
 }
 
 impl<I: Id> EntityStore<I> {
@@ -18,16 +18,26 @@ impl<I: Id> EntityStore<I> {
         }
     }
 
-    pub fn insert(&mut self, id: I, codes: &[Code]) -> Option<I> {
-        self.codes_to_id.insert(codes.to_vec(), id)
+    pub fn insert(&mut self, id: I, codes: &[Code]) {
+        self.codes_to_id.entry(codes.to_vec()).or_default().push(id);
     }
 
-    pub fn get_id(&self, codes: &[Code]) -> Option<&I> {
-        self.codes_to_id.get(codes)
+    pub fn get_ids(&self, codes: &[Code]) -> &[I] {
+        self.codes_to_id
+            .get(codes)
+            .map(|ids| ids.as_slice())
+            .unwrap_or_default()
     }
 
     pub fn len(&self) -> usize {
-        self.codes_to_id.len()
+        self.codes_to_id.values().map(|ids| ids.len()).sum()
+    }
+
+    pub fn num_collisions(&self) -> usize {
+        self.codes_to_id
+            .values()
+            .filter(|ids| ids.len() > 1)
+            .count()
     }
 }
 
@@ -45,17 +55,42 @@ mod tests {
 
         assert_eq!(store.len(), 0);
 
-        assert!(store.insert(id0, &codes0).is_none());
-        assert!(store.insert(id1, &codes1).is_none());
-        assert!(store.insert(id2, &codes2).is_none());
+        store.insert(id0, &codes0);
+        store.insert(id1, &codes1);
+        store.insert(id2, &codes2);
         assert_eq!(store.len(), 3);
 
-        assert_eq!(store.get_id(&codes0), Some(&id0));
-        assert_eq!(store.get_id(&codes1), Some(&id1));
-        assert_eq!(store.get_id(&codes2), Some(&id2));
+        assert_eq!(store.get_ids(&codes0), &[id0]);
+        assert_eq!(store.get_ids(&codes1), &[id1]);
+        assert_eq!(store.get_ids(&codes2), &[id2]);
+    }
 
-        assert_eq!(store.get_id(&vec![0, 0, 0]), None);
+    #[test]
+    fn test_entity_store_collisions() {
+        let mut store = EntityStore::new();
 
-        assert!(store.insert(id1, &codes0).is_some());
+        let (codes0, id0) = (vec![1, 2, 3], 0);
+        let (codes1, id1) = (vec![1, 2, 3], 1);
+        let (codes2, id2) = (vec![4, 5, 6], 2);
+
+        store.insert(id0, &codes0);
+        store.insert(id1, &codes1);
+        store.insert(id2, &codes2);
+
+        assert_eq!(store.len(), 3);
+        assert_eq!(store.num_collisions(), 1);
+    }
+
+    #[test]
+    fn test_entity_store_unknown_codes() {
+        let mut store = EntityStore::new();
+
+        let (codes0, id0) = (vec![1, 2, 3], 0);
+        let (codes1, id1) = (vec![4, 5, 6], 1);
+
+        store.insert(id0, &codes0);
+        store.insert(id1, &codes1);
+
+        assert_eq!(store.get_ids(&[7, 8, 9]).len(), 0);
     }
 }
