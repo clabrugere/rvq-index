@@ -1,3 +1,6 @@
-/target
+.venv
+benchmarks/data
 src/codebook_old.rs
+/target
 .vscode
+.claude
