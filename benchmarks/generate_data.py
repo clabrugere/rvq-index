@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import collections
 import logging
+import re
 from pathlib import Path
 from typing import NamedTuple
 
@@ -105,18 +106,9 @@ def load_beauty_items(max_items: int | None) -> list[Item]:
     return items
 
 
-# ---------------------------------------------------------------------------
-# RQ-VAE model loading and inference
-# ---------------------------------------------------------------------------
-
-
 def load_rqvae_checkpoint() -> dict[str, torch.Tensor]:
-    """Downloads and returns the state dict from edobotta/rqvae-amazon-beauty."""
     logger.info("Downloading RQ-VAE checkpoint...")
-    path = hf_hub_download(
-        repo_id=CHECKPOINT,
-        filename="model.safetensors",
-    )
+    path = hf_hub_download(repo_id=CHECKPOINT, filename="model.safetensors")
 
     return load_file(path)
 
@@ -131,7 +123,6 @@ def extract_codebooks(state_dict: dict[str, torch.Tensor]) -> torch.Tensor:
       layers.1.embedding.weight  [256, 32]
       layers.2.embedding.weight  [256, 32]
     """
-    import re
 
     pattern = re.compile(r"^layers\.(\d+)\.embedding\.weight$")
     candidates: dict[int, torch.Tensor] = {}
@@ -164,21 +155,16 @@ def build_encoder(state_dict: dict[str, torch.Tensor]) -> torch.nn.Module:
       encoder.mlp.6.weight  [ 32, 128]
     Architecture: Linear -> ReLU -> Linear -> ReLU -> Linear -> ReLU -> Linear
     """
-    import re
-
-    pattern = re.compile(r"^encoder\.mlp\.(\d+)\.weight$")
-    weight_keys = sorted(
-        [(int(m.group(1)), key) for key, _ in state_dict.items() if (m := pattern.match(key))],
-    )
-
-    if not weight_keys:
-        raise RuntimeError("No 'encoder.mlp.N.weight' tensors found in checkpoint.")
 
     layers: list[torch.nn.Module] = []
-    for _, key in weight_keys:
-        weight = state_dict[key]
-        in_f, out_f = weight.shape[1], weight.shape[0]
-        linear = torch.nn.Linear(in_f, out_f, bias=False)
+    for key in (0, 2, 4, 6):
+        weight = state_dict.get(f"encoder.mlp.{key}.weight")
+
+        if weight is None:
+            raise RuntimeError(f"Missing expected encoder weight: encoder.mlp.{key}.weight")
+
+        dim_in, dim_out = weight.shape[1], weight.shape[0]
+        linear = torch.nn.Linear(dim_in, dim_out, bias=False)
         with torch.no_grad():
             linear.weight.copy_(weight)
         layers.append(linear)
@@ -202,11 +188,11 @@ def encode_items(
     """
     Returns:
       latents: float32 ndarray (N, dim) — encoder output (query space)
-      codes:   uint16  ndarray (N, num_books)
+      codes: uint16  ndarray (N, num_books)
     """
-    texts = [f"{it.title} {it.brand}" for it in items]
 
-    logger.info(f"Encoding {len(texts)} items with Sentence Transformers...")
+    logger.info(f"Encoding {len(items)} items with Sentence Transformers...")
+    texts = [f"{it.title} {it.brand}" for it in items]
     emb_tensor = sentence_encoder.encode(
         texts,
         batch_size=batch_size,
@@ -249,6 +235,7 @@ def reconstruct(codebooks: torch.Tensor, codes: np.ndarray) -> np.ndarray:
     codes:     (N, L)    uint16 ndarray
     Returns:   (N, D)    float32 ndarray
     """
+
     cb = codebooks.numpy()  # (L, K, D)
     reconstructed = np.zeros((codes.shape[0], cb.shape[2]), dtype=np.float32)
     for book_idx in range(cb.shape[0]):
@@ -262,6 +249,7 @@ def compute_ground_truth(query_embeddings: np.ndarray, index_embeddings: np.ndar
     Brute-force dot-product nearest neighbor.
     Returns (Q, K) int64 array of indices into index_embeddings.
     """
+
     logger.info(f"Computing brute-force top-{top_k} ground truth...")
     scores = query_embeddings @ index_embeddings.T  # (Q, N)
     return np.argsort(-scores, axis=1)[:, :top_k].astype(np.int64)
@@ -271,14 +259,11 @@ def main() -> None:
     args = parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Load dataset
+    # Load dataset
     items = load_beauty_items(args.max_items)
 
     if len(items) <= args.query_count:
-        raise ValueError(
-            f"Not enough items ({len(items)}) for {args.query_count} queries. "
-            "Reduce --query-count or increase --max-items."
-        )
+        raise ValueError(f"Not enough items ({len(items)}) for {args.query_count} queries.")
 
     # Split: first N-Q items are indexed, last Q are queries
     n_index = len(items) - args.query_count
@@ -286,16 +271,16 @@ def main() -> None:
     query_items = items[n_index:]
     logger.info(f"Index items: {n_index}, Query items: {args.query_count}")
 
-    # 2. Load model artifacts
+    # Load model artifacts
     state_dict = load_rqvae_checkpoint()
     codebooks_tensor = extract_codebooks(state_dict)  # (L, K, D)
     encoder = build_encoder(state_dict)
 
-    # 3. Load sentence transformer (same model used during RQ-VAE training)
+    # Load sentence transformer (same model used during RQ-VAE training)
     logger.info("Loading Sentence Transformer...")
     sentence_encoder = SentenceTransformer(SENTENCE_MODEL, device=DEVICE)
 
-    # 4. Encode all items
+    # Encode all items
     all_items = index_items + query_items
     latents, codes = encode_items(encoder, sentence_encoder, all_items, codebooks_tensor)
 
@@ -304,16 +289,16 @@ def main() -> None:
     index_codes = codes[:n_index]
     codebooks_tensor = codebooks_tensor.float().cpu()
 
-    # 5. Brute-force ground truth in latent space (measures quantization loss)
+    # Brute-force ground truth in latent space (measures quantization loss)
     gt_latent = compute_ground_truth(query_latents, index_latents, args.top_k)
 
-    # 6. Brute-force ground truth in quantized space (measures index correctness; recall should be ~1)
+    # Brute-force ground truth in quantized space (measures index correctness; recall should be ~1)
     # Query side uses raw latents (same as what the index receives at search time).
     # Item side uses RVQ reconstructions (same as what the index scores against).
     index_reconstructed = reconstruct(codebooks_tensor, index_codes)
     gt_quantized = compute_ground_truth(query_latents, index_reconstructed, args.top_k)
 
-    # 7. Save artifacts
+    # Save artifacts
     logger.info(f"Saving artifacts to {args.out_dir}/...")
 
     save_file({"codebooks": codebooks_tensor}, str(args.out_dir / "codebooks.safetensors"))
