@@ -1,7 +1,4 @@
-use std::{
-    cmp::Ordering,
-    collections::{BinaryHeap, HashMap},
-};
+use std::{cmp::Ordering, collections::BinaryHeap};
 
 use crate::codebook::{Code, Scalar, ScoredBooks};
 use crate::errors::{TrieError, TrieResult};
@@ -60,7 +57,7 @@ impl<T: Scalar> Ord for Candidate<'_, T> {
 
 #[derive(Debug, Default)]
 struct TrieNode {
-    children: HashMap<Code, Self>,
+    children: Vec<Option<Self>>,
 }
 
 // Structural index over code paths for beam prefix search
@@ -85,7 +82,7 @@ impl CodeTrie {
     fn traverse<'n>(&'n self, codes: &[Code]) -> TrieResult<&'n TrieNode> {
         let mut node = &self.root;
         for code in codes {
-            match node.children.get(code) {
+            match node.children.get(*code).and_then(Option::as_ref) {
                 Some(child) => node = child,
                 None => return Err(TrieError::NotFound(*code)),
             }
@@ -100,7 +97,10 @@ impl CodeTrie {
 
         let mut current_node = &mut self.root;
         for &code in codes {
-            current_node = current_node.children.entry(code).or_default();
+            if current_node.children.len() <= code {
+                current_node.children.resize_with(code + 1, || None);
+            }
+            current_node = current_node.children[code].get_or_insert_with(TrieNode::default);
         }
         Ok(())
     }
@@ -166,7 +166,7 @@ impl CodeTrie {
             }
 
             for (code, &score) in scores.get_book(candidate.depth).iter().enumerate() {
-                if let Some(child) = candidate.node.children.get(&code) {
+                if let Some(child) = candidate.node.children.get(code).and_then(Option::as_ref) {
                     path_arena.push((code, candidate.path_idx));
 
                     let new_path_idx = Some(path_arena.len() - 1);

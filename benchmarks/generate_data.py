@@ -1,14 +1,6 @@
 """
 Generate benchmark artifacts for rvq-index from the pretrained RQ-VAE Amazon Beauty model.
 
-Outputs (in --out-dir):
-  codebooks.npy          float32 (num_books, num_codes, dim)
-  codebooks.safetensors  same data in safetensors format, key "codebooks"
-  entity_codes.npy       uint16  (N, num_books)  — RVQ codes per indexed item
-  entity_ids.npy         int64   (N,)             — row index of each item
-  query_embeddings.npy   float32 (Q, dim)         — encoder output for query items
-  query_gt.npy           int64   (Q, K)           — brute-force top-K entity indices
-
 Usage:
   uv run python generate_data.py [--max-items N] [--query-count Q] [--top-k K] [--out-dir DIR]
 """
@@ -18,7 +10,6 @@ from __future__ import annotations
 import argparse
 import collections
 import logging
-import re
 from pathlib import Path
 from typing import NamedTuple
 
@@ -36,7 +27,6 @@ logger = logging.getLogger(__name__)
 DATASET = "jhan21/amazon-beauty-reviews-dataset"
 SENTENCE_MODEL = "sentence-transformers/sentence-t5-base"
 CHECKPOINT = "edobotta/rqvae-amazon-beauty"
-
 DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
 
@@ -65,7 +55,7 @@ def parse_args() -> argparse.Namespace:
 def load_beauty_items(max_items: int | None) -> list[Item]:
     """
     Returns a list of Item namedtuples sorted by descending review count.
-    Only items with >=5 reviews are kept (matching the RQ-VAE paper's filter).
+    Only items with >=5 reviews are kept (matching the paper).
     """
     logger.info("Loading Amazon Beauty reviews...")
     reviews = load_dataset(DATASET, split="train")
@@ -113,7 +103,7 @@ def load_rqvae_checkpoint() -> dict[str, torch.Tensor]:
     return load_file(path)
 
 
-def extract_codebooks(state_dict: dict[str, torch.Tensor]) -> torch.Tensor:
+def extract_codebooks(state_dict: dict[str, torch.Tensor], device: str) -> torch.Tensor:
     """
     Extract codebook weight matrices from the state dict.
     Returns tensor of shape (num_books, num_codes, dim).
@@ -124,27 +114,22 @@ def extract_codebooks(state_dict: dict[str, torch.Tensor]) -> torch.Tensor:
       layers.2.embedding.weight  [256, 32]
     """
 
-    pattern = re.compile(r"^layers\.(\d+)\.embedding\.weight$")
-    candidates: dict[int, torch.Tensor] = {}
-    for key, tensor in state_dict.items():
-        m = pattern.match(key)
-        if m:
-            candidates[int(m.group(1))] = tensor
+    layers = []
+    for key in (0, 1, 2):
+        weight = state_dict.get(f"layers.{key}.embedding.weight")
 
-    if not candidates:
-        logger.error("Could not find codebook tensors. Available keys:")
-        for k, v in state_dict.items():
-            logger.info(f" - {k}: {v.shape}")
-        raise RuntimeError("No 'layers.N.embedding.weight' tensors found in checkpoint.")
+        if weight is None:
+            raise RuntimeError(f"Missing expected encoder weight: layers.{key}.embedding.weight")
 
-    sorted_layers = [candidates[i] for i in sorted(candidates)]
-    codebooks = torch.stack(sorted_layers, dim=0).to(DEVICE)  # (L, K, D)
-    logger.info(f" - Extracted codebooks: shape={codebooks.shape}")
+        layers.append(weight)
+
+    codebooks = torch.stack(layers, dim=0).to(device)  # (L, K, D)
+    logger.info(f" - Codebooks shape: {codebooks.shape}")
 
     return codebooks
 
 
-def build_encoder(state_dict: dict[str, torch.Tensor]) -> torch.nn.Module:
+def build_encoder(state_dict: dict[str, torch.Tensor], device: str) -> torch.nn.Module:
     """
     Reconstruct the encoder MLP from the state dict.
 
@@ -172,7 +157,7 @@ def build_encoder(state_dict: dict[str, torch.Tensor]) -> torch.nn.Module:
 
     layers = layers[:-1]  # drop trailing ReLU
     encoder = torch.nn.Sequential(*layers)
-    encoder.to(DEVICE)
+    encoder.to(device)
 
     return encoder
 
@@ -183,15 +168,11 @@ def encode_items(
     sentence_encoder: SentenceTransformer,
     items: list[Item],
     codebooks: torch.Tensor,
+    device: str,
     batch_size: int = 256,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Returns:
-      latents: float32 ndarray (N, dim) — encoder output (query space)
-      codes: uint16  ndarray (N, num_books)
-    """
 
-    logger.info(f"Encoding {len(items)} items with Sentence Transformers...")
+    logger.info(f"Encoding {len(items)} items...")
     texts = [f"{it.title} {it.brand}" for it in items]
     emb_tensor = sentence_encoder.encode(
         texts,
@@ -205,10 +186,10 @@ def encode_items(
     latents_list = []
     for i in range(0, len(emb_tensor), batch_size):
         batch = emb_tensor[i : i + batch_size]
-        latents_list.append(encoder(batch.to(DEVICE)))
+        latents_list.append(encoder(batch.to(device)))
     latents = torch.cat(latents_list, dim=0)  # (N, 32)
 
-    # RVQ assignment: for each layer, find nearest codebook entry on the residual
+    # for each layer, find nearest codebook entry on the residual
     logger.info("Assigning RVQ codes...")
     num_books, num_codes, dim = codebooks.shape
     residual = latents.clone()
@@ -231,9 +212,6 @@ def encode_items(
 def reconstruct(codebooks: torch.Tensor, codes: np.ndarray) -> np.ndarray:
     """
     Reconstruct embeddings from RVQ codes.
-    codebooks: (L, K, D) float32 tensor
-    codes:     (N, L)    uint16 ndarray
-    Returns:   (N, D)    float32 ndarray
     """
 
     cb = codebooks.numpy()  # (L, K, D)
@@ -255,6 +233,25 @@ def compute_ground_truth(query_embeddings: np.ndarray, index_embeddings: np.ndar
     return np.argsort(-scores, axis=1)[:, :top_k].astype(np.int64)
 
 
+def persist(
+    out_dir: str,
+    codebooks_tensor: torch.Tensor,
+    index_codes: np.ndarray,
+    n_index: int,
+    query_latents: np.ndarray,
+    gt_latent: np.ndarray,
+    gt_quantized: np.ndarray,
+) -> None:
+    logger.info(f"Saving artifacts to {out_dir}/...")
+    save_file({"codebooks": codebooks_tensor}, out_dir / "codebooks.safetensors")
+    np.save(out_dir / "codebooks.npy", codebooks_tensor.numpy())
+    np.save(out_dir / "entity_codes.npy", index_codes)
+    np.save(out_dir / "entity_ids.npy", np.arange(n_index, dtype=np.int64))
+    np.save(out_dir / "query_embeddings.npy", query_latents)
+    np.save(out_dir / "query_gt.npy", gt_latent)
+    np.save(out_dir / "query_gt_quantized.npy", gt_quantized)
+
+
 def main() -> None:
     args = parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -273,8 +270,8 @@ def main() -> None:
 
     # Load model artifacts
     state_dict = load_rqvae_checkpoint()
-    codebooks_tensor = extract_codebooks(state_dict)  # (L, K, D)
-    encoder = build_encoder(state_dict)
+    codebooks_tensor = extract_codebooks(state_dict, DEVICE)  # (L, K, D)
+    encoder = build_encoder(state_dict, DEVICE)
 
     # Load sentence transformer (same model used during RQ-VAE training)
     logger.info("Loading Sentence Transformer...")
@@ -282,7 +279,7 @@ def main() -> None:
 
     # Encode all items
     all_items = index_items + query_items
-    latents, codes = encode_items(encoder, sentence_encoder, all_items, codebooks_tensor)
+    latents, codes = encode_items(encoder, sentence_encoder, all_items, codebooks_tensor, DEVICE)
 
     index_latents = latents[:n_index]
     query_latents = latents[n_index:]
@@ -299,15 +296,15 @@ def main() -> None:
     gt_quantized = compute_ground_truth(query_latents, index_reconstructed, args.top_k)
 
     # Save artifacts
-    logger.info(f"Saving artifacts to {args.out_dir}/...")
-
-    save_file({"codebooks": codebooks_tensor}, str(args.out_dir / "codebooks.safetensors"))
-    np.save(args.out_dir / "codebooks.npy", codebooks_tensor.numpy())
-    np.save(args.out_dir / "entity_codes.npy", index_codes)
-    np.save(args.out_dir / "entity_ids.npy", np.arange(n_index, dtype=np.int64))
-    np.save(args.out_dir / "query_embeddings.npy", query_latents)
-    np.save(args.out_dir / "query_gt.npy", gt_latent)
-    np.save(args.out_dir / "query_gt_quantized.npy", gt_quantized)
+    persist(
+        args.out_dir,
+        codebooks_tensor,
+        index_codes,
+        n_index,
+        query_latents,
+        gt_latent,
+        gt_quantized,
+    )
 
     logger.info("Done.")
     logger.info(f" - codebooks: {codebooks_tensor.shape}, dtype={codebooks_tensor.dtype}")

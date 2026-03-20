@@ -6,7 +6,9 @@ _Not intended for production._
 
 ## Overview
 
-RVQ approximates a dense vector as a sum of codes $e \approx sum c_i$. The vector is encoded as a sequence of integer codes, one per codebook layer. Each code identifies the nearest entry in that layer's codebook. The search is exact in quantized space but not in latent space, so the recall is directly dependent on the RVQ model that generates the codebooks and item's code sequences.
+Exact search over very large item space is out generally out of question and so approximate methods such as HNSW are used. But item space can grow so large that event those become unpractical, because of the memory footprint and upsert operations.
+
+Instead, RVQ approximates a dense vector as a sum of codes $e \approx sum c_i$. The vector is encoded as a sequence of integer codes, one per codebook layer, and so only the codes need to be stored. The search is exact in quantized space but not in latent space, so the recall is directly dependent on the RVQ model that generates the codebooks and item's code sequences.
 
 This crate provides:
 - `CodeBooks` — stores L codebooks of shape `[L, K, D]` and scores a query against all entries
@@ -21,7 +23,7 @@ Given a query vector and a catalog of (id, codes) pairs, `RvqIndex::search` retu
 
 `CodeBooks::score(query)` computes the dot product of the query against every entry in every codebook, producing a `ScoredBooks` with shape `[L, K]`. This is O(L x K x D) and runs once per query before trie traversal.
 
-As the original embedding is decomposed by a sum of codes, so is the score: $score(q, Q(c)) = \sum_l score(q, code_l^c)$ where $Q(c)$ is the quantized candidate, which means that while search is exact in quantized space, it is not in latent space.
+As the original embedding is decomposed by a sum of codes, so is the score: $\text{score}(q, Q(c)) = \sum_l \text{score}(q, \text{code}_l^c)$ where $Q(c)$ is the quantized candidate. So while search is exact in quantized space, it is not in latent space.
 
 ### Trie search with upper-bound pruning
 
@@ -30,9 +32,9 @@ As the original embedding is decomposed by a sum of codes, so is the score: $sco
 - `cumulative_score` — sum of per-book scores accumulated so far
 - `upper_bound` — cumulative score plus the sum of per-book maxima over all remaining books
 
-The upper bound is precomputed as a suffix array of per-book maxima. Any candidate whose upper bound is lower than the current k-th best complete path can be safely pruned. The search is exact in quantized space: it finds the true top-k code paths by dot-product score, visiting only the paths that actually exist.
+The upper bound is precomputed as a suffix array of per-book maxima. Any candidate whose upper bound is lower than the current k-th best complete path can be safely pruned. The search finds the true top-k code paths (by dot-product), visiting only the paths that actually exist.
 
-Complexity: O(K x L x log(K x C)) per query, independent of catalog size N, making this solution particularly interesting for very large candidate spaces.
+The complexity is independent of catalog size N, making this solution particularly interesting for very large candidate spaces.
 
 ### Parallelism
 
@@ -40,7 +42,7 @@ Complexity: O(K x L x log(K x C)) per query, independent of catalog size N, maki
 
 ## Design choices and limitations
 
-- **HashMap trie nodes.** Each `TrieNode` stores children in a `HashMap<Code, TrieNode>`. This handles sparse code spaces cleanly but has high constant overhead. At small N (below ~10K items) a brute-force scan over reconstructed vectors is likely faster.
+- **Vec trie nodes.** Each `TrieNode` stores children in a `Vec<Option<Self>>` instead of a `HashMap`, avoiding hashing overhead at the cost of a fixed allocation per node sized to the number of codes per level.
 
 - **Scalar dot products, no SIMD.** Scoring iterates with plain Rust iterators. A SIMD-accelerated scoring pass would reduce query latency, especially at high D.
 
@@ -91,14 +93,13 @@ cd ..
 cargo bench --features npy,safetensors
 ```
 
-Results on Apple M-series (100 queries, K=10):
+Results on Apple M3 Pro (100 queries, K=10):
 
-| N items | Index creation | Single query | Batch (100 queries) | Recall@10 (quantized) | Recall@10 (latent) |
-|--------:|---------------:|-------------:|--------------------:|----------------------:|-------------------:|
-| 1 000   | ~200 µs        | ~47 µs       | ~1.0 ms             | ~1.0                  | ~0.64              |
-| 50 000  | ~6.5 ms        | ~44 µs       | ~920 µs             | ~1.0                  | ~0.30              |
+| N items | Index creation | Single query | Batch (100 queries) |
+|--------:|---------------:|-------------:|--------------------:|
+| 50 000  | ~6.2 ms        | ~12 µs       | ~414 µs             |
 
-Query latency is flat in N, confirming O(K × L × log(K × C)) complexity independent of catalog size. Recall@10 in quantized space is ~1.0, validating index correctness. Recall@10 in latent space reflects quantization loss from the RVQ model and degrades as N grows (more competition for top-k slots).
+Query latency is flat in N, confirming O(K × L × log(K × C)) complexity independent of catalog size. Recall@10 in quantized space is ~1.0, validating that the index does exact search there.
 
 ## Project layout
 
