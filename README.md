@@ -98,8 +98,9 @@ Results on Apple M3 Pro (100 queries, K=10):
 | N items | Index creation | Single query | Batch (100 queries) |
 |--------:|---------------:|-------------:|--------------------:|
 | 50 000  | ~6.2 ms        | ~12 µs       | ~414 µs             |
+| 100 000 | ~10.7 ms       | ~24 µs       | ~465 µs             |
 
-Query latency is flat in N, confirming O(K × L × log(K × C)) complexity independent of catalog size. Recall@10 in quantized space is ~1.0, validating that the index does exact search there.
+Recall@10 in quantized space is ~1.0, validating that the index does exact search there.
 
 ## Project layout
 
