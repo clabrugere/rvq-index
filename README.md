@@ -1,14 +1,14 @@
 # rvq-index
 
-A Rust implementation of a nearest-neighbor index for Residual Vector Quantization (RVQ) codes, with beam search retrieval.
+Rust implementation of a nearest-neighbor index for Residual Vector Quantization (RVQ) codes, with beam search retrieval.
 
 _Not intended for production._
 
 ## Overview
 
-Exact search over very large item space is out generally out of question and so approximate methods such as HNSW are used. But item space can grow so large that event those become unpractical, because of the memory footprint and upsert operations.
+Exact search over very large item space is generally out of question, and approximate methods such as HNSW are used instead. But item space can grow so large that even those become unpractical because of the memory footprint and complexities in managing the index lifecycle.
 
-Instead, RVQ approximates a dense vector as a sum of codes $e \approx sum c_i$. The vector is encoded as a sequence of integer codes, one per codebook layer, and so only the codes need to be stored. The search is exact in quantized space but not in latent space, so the recall is directly dependent on the RVQ model that generates the codebooks and item's code sequences.
+Instead of storing and searching over all items, RVQ approximates a dense vector as a sum of codes $e \approx \sum c_i$. The vector is encoded as a sequence of integer codes, one per codebook layer. Only the codes need to be stored and the search is exact in quantized space (but not in latent space, so the recall is directly dependent on the RVQ model that generates the codebooks and item's code sequences).
 
 This crate provides:
 - `CodeBooks` — stores L codebooks of shape `[L, K, D]` and scores a query against all entries
@@ -23,7 +23,7 @@ Given a query vector and a catalog of (id, codes) pairs, `RvqIndex::search` retu
 
 `CodeBooks::score(query)` computes the dot product of the query against every entry in every codebook, producing a `ScoredBooks` with shape `[L, K]`. This is O(L x K x D) and runs once per query before trie traversal.
 
-As the original embedding is decomposed by a sum of codes, so is the score: $\text{score}(q, Q(c)) = \sum_l \text{score}(q, \text{code}_l^c)$ where $Q(c)$ is the quantized candidate. So while search is exact in quantized space, it is not in latent space.
+As the original embedding is decomposed by a sum of codes, so is the score: $\text{score}(q, Q(i)) = \sum_l \text{score}(q, \text{c}_l^c)$ where $Q(c)$ is the quantized item representation.
 
 ### Trie search with upper-bound pruning
 
